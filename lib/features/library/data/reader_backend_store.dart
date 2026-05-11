@@ -8,9 +8,13 @@ import 'package:path_provider/path_provider.dart';
 import '../../reader/domain/reading_models.dart';
 
 class ReaderBackendStore {
-  ReaderBackendStore({this.fileName = 'insightshelf_backend.json'});
+  ReaderBackendStore({
+    this.fileName = 'insightshelf_backend.json',
+    this.useApplicationSupportDirectory = true,
+  });
 
   final String fileName;
+  final bool useApplicationSupportDirectory;
   File? _file;
   BackendSnapshot? _snapshot;
 
@@ -54,16 +58,21 @@ class ReaderBackendStore {
     }
 
     Directory directory;
-    try {
-      directory = await getApplicationSupportDirectory().timeout(
-        const Duration(seconds: 2),
-      );
-    } on MissingPluginException {
+    if (!useApplicationSupportDirectory ||
+        Platform.environment['FLUTTER_TEST'] == 'true') {
       directory = Directory.systemTemp;
-    } on UnsupportedError {
-      directory = Directory.systemTemp;
-    } on TimeoutException {
-      directory = Directory.systemTemp;
+    } else {
+      try {
+        directory = await getApplicationSupportDirectory().timeout(
+          const Duration(seconds: 2),
+        );
+      } on MissingPluginException {
+        directory = Directory.systemTemp;
+      } on UnsupportedError {
+        directory = Directory.systemTemp;
+      } on TimeoutException {
+        directory = Directory.systemTemp;
+      }
     }
 
     final appDirectory = Directory('${directory.path}/insightshelf_mobile');

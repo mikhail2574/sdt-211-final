@@ -3,20 +3,23 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'core/theme/app_theme.dart';
 import 'features/auth/data/auth_repository.dart';
-import 'features/auth/data/mock_insight_shelf_api.dart';
+import 'features/auth/data/local_insight_shelf_backend.dart';
 import 'features/auth/presentation/auth_cubit.dart';
 import 'features/auth/presentation/login_screen.dart';
+import 'features/library/data/reader_backend_store.dart';
 import 'features/library/data/library_repository.dart';
 import 'features/library/presentation/library_cubit.dart';
 import 'features/library/presentation/main_shell.dart';
 import 'features/reader/presentation/reader_cubit.dart';
 
 class InsightShelfApp extends StatelessWidget {
-  const InsightShelfApp({super.key});
+  const InsightShelfApp({this.backendStore, super.key});
+
+  final ReaderBackendStore? backendStore;
 
   @override
   Widget build(BuildContext context) {
-    final api = MockInsightShelfApi();
+    final api = LocalInsightShelfBackend(backendStore: backendStore);
     final authRepository = AuthRepository(api);
     final libraryRepository = LibraryRepository(api);
 

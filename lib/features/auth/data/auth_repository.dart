@@ -1,10 +1,10 @@
 import '../domain/user.dart';
-import 'mock_insight_shelf_api.dart';
+import 'local_insight_shelf_backend.dart';
 
 class AuthRepository {
   const AuthRepository(this._api);
 
-  final MockInsightShelfApi _api;
+  final LocalInsightShelfBackend _api;
 
   Future<User?> restoreSession() => _api.restoreSession();
 

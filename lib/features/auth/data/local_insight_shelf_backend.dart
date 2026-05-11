@@ -17,8 +17,8 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-class MockInsightShelfApi {
-  MockInsightShelfApi({
+class LocalInsightShelfBackend {
+  LocalInsightShelfBackend({
     PdfBookParser pdfBookParser = const PdfBookParser(),
     PurchasedBooksCatalog purchasedBooksCatalog = const PurchasedBooksCatalog(),
     ReaderBackendStore? backendStore,

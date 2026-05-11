@@ -1,11 +1,11 @@
-import '../../auth/data/mock_insight_shelf_api.dart';
+import '../../auth/data/local_insight_shelf_backend.dart';
 import '../../library/domain/book.dart';
 import '../../reader/domain/reading_models.dart';
 
 class LibraryRepository {
   const LibraryRepository(this._api);
 
-  final MockInsightShelfApi _api;
+  final LocalInsightShelfBackend _api;
 
   bool get isOnline => _api.isOnline;
   Future<int> get pendingSyncCount => _api.pendingSyncCount;
