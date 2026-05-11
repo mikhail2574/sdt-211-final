@@ -1,6 +1,10 @@
 import 'dart:async';
 
+import '../../library/data/pdf_book_parser.dart';
+import '../../library/data/purchased_books_catalog.dart';
+import '../../library/data/reader_backend_store.dart';
 import '../../library/domain/book.dart';
+import '../../reader/data/ollama_insight_client.dart';
 import '../../reader/domain/reading_models.dart';
 import '../domain/user.dart';
 
@@ -14,20 +18,34 @@ class ApiException implements Exception {
 }
 
 class MockInsightShelfApi {
-  MockInsightShelfApi();
+  MockInsightShelfApi({
+    PdfBookParser pdfBookParser = const PdfBookParser(),
+    PurchasedBooksCatalog purchasedBooksCatalog = const PurchasedBooksCatalog(),
+    ReaderBackendStore? backendStore,
+    OllamaInsightClient? ollamaInsightClient,
+  }) : _pdfBookParser = pdfBookParser,
+       _purchasedBooksCatalog = purchasedBooksCatalog,
+       _backendStore = backendStore ?? ReaderBackendStore(),
+       _ollamaInsightClient = ollamaInsightClient ?? OllamaInsightClient();
+
+  final PdfBookParser _pdfBookParser;
+  final PurchasedBooksCatalog _purchasedBooksCatalog;
+  final ReaderBackendStore _backendStore;
+  final OllamaInsightClient _ollamaInsightClient;
 
   User? _session;
   bool _online = true;
-  final Set<String> _downloadedBookIds = {};
-  final Map<String, ReadingProgress> _progress = {};
-  final Map<String, List<Bookmark>> _bookmarks = {};
-  final Map<String, List<Highlight>> _highlights = {};
-  final Map<String, List<Note>> _notes = {};
-  final Map<String, List<InsightCard>> _insights = {};
-  final List<String> _pendingSyncActions = [];
+  List<Book>? _catalog;
+  final Map<String, Book> _parsedBooks = {};
 
   bool get isOnline => _online;
-  int get pendingSyncCount => _pendingSyncActions.length;
+  String get ollamaEndpoint => _ollamaInsightClient.endpoint;
+  String get ollamaModel => _ollamaInsightClient.model;
+
+  Future<int> get pendingSyncCount async {
+    final snapshot = await _backendStore.load();
+    return snapshot.pendingSyncActions.length;
+  }
 
   Future<User?> restoreSession() async {
     await _latency();
@@ -45,7 +63,7 @@ class MockInsightShelfApi {
       id: 'user-1',
       name: 'Alex Reader',
       email: email.trim(),
-      token: 'mock-token-${DateTime.now().millisecondsSinceEpoch}',
+      token: 'local-session-${DateTime.now().millisecondsSinceEpoch}',
     );
     return _session!;
   }
@@ -57,11 +75,14 @@ class MockInsightShelfApi {
 
   Future<List<Book>> fetchPurchasedBooks() async {
     await _networkRequired();
-    return _books
+    final catalog = await _loadCatalog();
+    final snapshot = await _backendStore.load();
+
+    return catalog
         .map(
           (book) => book.copyWith(
-            isDownloaded: _downloadedBookIds.contains(book.id),
-            progress: _progress[book.id]?.percent ?? book.progress,
+            isDownloaded: snapshot.downloadedBookIds.contains(book.id),
+            progress: snapshot.progress[book.id]?.percent ?? book.progress,
           ),
         )
         .toList(growable: false);
@@ -69,76 +90,126 @@ class MockInsightShelfApi {
 
   Future<Book> downloadBook(String bookId) async {
     await _networkRequired(milliseconds: 650);
-    _downloadedBookIds.add(bookId);
-    return _books
-        .firstWhere((book) => book.id == bookId)
-        .copyWith(isDownloaded: true, progress: _progress[bookId]?.percent);
+    final parsed = await _parsedBook(bookId);
+    final snapshot = await _backendStore.load();
+    final downloadedBookIds = {...snapshot.downloadedBookIds, bookId};
+    await _backendStore.save(
+      snapshot.copyWith(downloadedBookIds: downloadedBookIds),
+    );
+    return parsed.copyWith(
+      isDownloaded: true,
+      progress: snapshot.progress[bookId]?.percent,
+    );
   }
 
   Future<void> saveProgress(ReadingProgress progress) async {
-    await _latency(milliseconds: 160);
-    _progress[progress.bookId] = progress;
-    _queueIfOffline('Progress for ${progress.bookId}');
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    await _backendStore.save(
+      snapshot.copyWith(
+        progress: {...snapshot.progress, progress.bookId: progress},
+        pendingSyncActions: _queued(
+          snapshot,
+          'Progress for ${progress.bookId}',
+        ),
+      ),
+    );
   }
 
   Future<void> saveBookmark(Bookmark bookmark) async {
-    await _latency(milliseconds: 120);
-    final items = List<Bookmark>.from(_bookmarks[bookmark.bookId] ?? []);
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = List<Bookmark>.from(
+      snapshot.bookmarks[bookmark.bookId] ?? [],
+    );
     items.removeWhere((item) => item.id == bookmark.id);
     items.add(bookmark);
-    _bookmarks[bookmark.bookId] = items;
-    _queueIfOffline('Bookmark ${bookmark.id}');
+    await _backendStore.save(
+      snapshot.copyWith(
+        bookmarks: {...snapshot.bookmarks, bookmark.bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Bookmark ${bookmark.id}'),
+      ),
+    );
   }
 
   Future<void> deleteBookmark(String bookId, String bookmarkId) async {
-    await _latency(milliseconds: 120);
-    _bookmarks[bookId] = (_bookmarks[bookId] ?? [])
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = (snapshot.bookmarks[bookId] ?? [])
         .where((item) => item.id != bookmarkId)
         .toList();
-    _queueIfOffline('Delete bookmark $bookmarkId');
+    await _backendStore.save(
+      snapshot.copyWith(
+        bookmarks: {...snapshot.bookmarks, bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Delete bookmark $bookmarkId'),
+      ),
+    );
   }
 
   Future<void> saveHighlight(Highlight highlight) async {
-    await _latency(milliseconds: 120);
-    final items = List<Highlight>.from(_highlights[highlight.bookId] ?? []);
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = List<Highlight>.from(
+      snapshot.highlights[highlight.bookId] ?? [],
+    );
     items.add(highlight);
-    _highlights[highlight.bookId] = items;
-    _queueIfOffline('Highlight ${highlight.id}');
+    await _backendStore.save(
+      snapshot.copyWith(
+        highlights: {...snapshot.highlights, highlight.bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Highlight ${highlight.id}'),
+      ),
+    );
   }
 
   Future<void> deleteHighlight(String bookId, String highlightId) async {
-    await _latency(milliseconds: 120);
-    _highlights[bookId] = (_highlights[bookId] ?? [])
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = (snapshot.highlights[bookId] ?? [])
         .where((item) => item.id != highlightId)
         .toList();
-    _queueIfOffline('Delete highlight $highlightId');
+    await _backendStore.save(
+      snapshot.copyWith(
+        highlights: {...snapshot.highlights, bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Delete highlight $highlightId'),
+      ),
+    );
   }
 
   Future<void> saveNote(Note note) async {
-    await _latency(milliseconds: 120);
-    final items = List<Note>.from(_notes[note.bookId] ?? []);
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = List<Note>.from(snapshot.notes[note.bookId] ?? []);
     items.removeWhere((item) => item.id == note.id);
     items.add(note);
-    _notes[note.bookId] = items;
-    _queueIfOffline('Note ${note.id}');
+    await _backendStore.save(
+      snapshot.copyWith(
+        notes: {...snapshot.notes, note.bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Note ${note.id}'),
+      ),
+    );
   }
 
   Future<void> deleteNote(String bookId, String noteId) async {
-    await _latency(milliseconds: 120);
-    _notes[bookId] = (_notes[bookId] ?? [])
+    await _latency(milliseconds: 80);
+    final snapshot = await _backendStore.load();
+    final items = (snapshot.notes[bookId] ?? [])
         .where((item) => item.id != noteId)
         .toList();
-    _queueIfOffline('Delete note $noteId');
+    await _backendStore.save(
+      snapshot.copyWith(
+        notes: {...snapshot.notes, bookId: items},
+        pendingSyncActions: _queued(snapshot, 'Delete note $noteId'),
+      ),
+    );
   }
 
   Future<ReaderPayload> loadReaderPayload(String bookId) async {
-    await _latency(milliseconds: 250);
-    final book = _books
-        .firstWhere((item) => item.id == bookId)
-        .copyWith(
-          isDownloaded: _downloadedBookIds.contains(bookId),
-          progress: _progress[bookId]?.percent,
-        );
+    await _latency(milliseconds: 140);
+    final snapshot = await _backendStore.load();
+    final book = (await _parsedBook(bookId)).copyWith(
+      isDownloaded: snapshot.downloadedBookIds.contains(bookId),
+      progress: snapshot.progress[bookId]?.percent,
+    );
     if (!_online && !book.isDownloaded) {
       throw const ApiException(
         'This book is not downloaded for offline reading.',
@@ -147,11 +218,11 @@ class MockInsightShelfApi {
 
     return ReaderPayload(
       book: book,
-      progress: _progress[bookId],
-      bookmarks: List.unmodifiable(_bookmarks[bookId] ?? []),
-      highlights: List.unmodifiable(_highlights[bookId] ?? []),
-      notes: List.unmodifiable(_notes[bookId] ?? []),
-      insights: List.unmodifiable(_insights[bookId] ?? []),
+      progress: snapshot.progress[bookId],
+      bookmarks: List.unmodifiable(snapshot.bookmarks[bookId] ?? []),
+      highlights: List.unmodifiable(snapshot.highlights[bookId] ?? []),
+      notes: List.unmodifiable(snapshot.notes[bookId] ?? []),
+      insights: List.unmodifiable(snapshot.insights[bookId] ?? []),
     );
   }
 
@@ -161,38 +232,87 @@ class MockInsightShelfApi {
     required String selectedText,
     required InsightType type,
   }) async {
-    await _networkRequired(milliseconds: 900);
-    final card = InsightCard(
-      id: 'insight-${DateTime.now().microsecondsSinceEpoch}',
+    final card = await _ollamaInsightClient.generate(
       bookId: bookId,
       chapterIndex: chapterIndex,
+      selectedText: selectedText,
       type: type,
-      title: _titleFor(type),
-      body: _bodyFor(type, selectedText),
-      points: _pointsFor(type),
     );
-    final items = List<InsightCard>.from(_insights[bookId] ?? [])
+    final snapshot = await _backendStore.load();
+    final items = List<InsightCard>.from(snapshot.insights[bookId] ?? [])
       ..insert(0, card);
-    _insights[bookId] = items;
+    await _backendStore.save(
+      snapshot.copyWith(insights: {...snapshot.insights, bookId: items}),
+    );
     return card;
   }
 
   Future<void> setOnline(bool value) async {
-    await _latency(milliseconds: 120);
+    await _latency(milliseconds: 80);
     _online = value;
   }
 
   Future<int> syncPendingActions() async {
-    await _networkRequired(milliseconds: 700);
-    final synced = _pendingSyncActions.length;
-    _pendingSyncActions.clear();
+    await _networkRequired(milliseconds: 500);
+    final snapshot = await _backendStore.load();
+    final synced = snapshot.pendingSyncActions.length;
+    await _backendStore.save(snapshot.copyWith(pendingSyncActions: []));
     return synced;
   }
 
-  void _queueIfOffline(String action) {
-    if (!_online) {
-      _pendingSyncActions.add(action);
+  Future<void> updateOllamaSettings({
+    required String endpoint,
+    required String model,
+  }) async {
+    await _latency(milliseconds: 80);
+    _ollamaInsightClient.endpoint = endpoint.trim();
+    _ollamaInsightClient.model = model.trim();
+  }
+
+  Future<String> testOllama() async {
+    final insight = await _ollamaInsightClient.generate(
+      bookId: 'healthcheck',
+      chapterIndex: 0,
+      selectedText:
+          'Software architecture turns quality goals into design decisions.',
+      type: InsightType.simpleExplanation,
+    );
+    return insight.body;
+  }
+
+  Future<Book> _parsedBook(String bookId) async {
+    final cached = _parsedBooks[bookId];
+    if (cached != null) {
+      return cached;
     }
+
+    final catalog = await _loadCatalog();
+    final book = catalog.firstWhere((item) => item.id == bookId);
+    final assetPath = book.assetPath;
+    if (assetPath == null) {
+      return book;
+    }
+
+    final chapters = await _pdfBookParser.parseAsset(assetPath);
+    final parsed = book.copyWith(chapters: chapters);
+    _parsedBooks[bookId] = parsed;
+    return parsed;
+  }
+
+  Future<List<Book>> _loadCatalog() async {
+    final cached = _catalog;
+    if (cached != null) {
+      return cached;
+    }
+    _catalog = await _purchasedBooksCatalog.loadPurchasedBooks();
+    return _catalog!;
+  }
+
+  List<String> _queued(BackendSnapshot snapshot, String action) {
+    if (_online) {
+      return snapshot.pendingSyncActions;
+    }
+    return [...snapshot.pendingSyncActions, action];
   }
 
   Future<void> _networkRequired({int milliseconds = 380}) async {
@@ -204,58 +324,8 @@ class MockInsightShelfApi {
     }
   }
 
-  Future<void> _latency({int milliseconds = 300}) {
+  Future<void> _latency({int milliseconds = 220}) {
     return Future<void>.delayed(Duration(milliseconds: milliseconds));
-  }
-
-  String _titleFor(InsightType type) {
-    switch (type) {
-      case InsightType.summary:
-        return 'Section Summary';
-      case InsightType.visual:
-        return 'Visual Framework';
-      case InsightType.example:
-        return 'Practical Example';
-      case InsightType.actionSteps:
-        return 'Action Steps';
-      case InsightType.simpleExplanation:
-        return 'Simpler Explanation';
-    }
-  }
-
-  String _bodyFor(InsightType type, String text) {
-    final compact = text.length > 130 ? '${text.substring(0, 130)}...' : text;
-    switch (type) {
-      case InsightType.summary:
-        return 'A concise explanation of: "$compact"';
-      case InsightType.visual:
-        return 'A three-part concept card connecting the main idea, driver, and result.';
-      case InsightType.example:
-        return 'A real-world business scenario showing how this idea changes a decision.';
-      case InsightType.actionSteps:
-        return 'A short checklist that turns the passage into something the reader can do.';
-      case InsightType.simpleExplanation:
-        return 'The same idea rewritten in plain language for faster comprehension.';
-    }
-  }
-
-  List<String> _pointsFor(InsightType type) {
-    switch (type) {
-      case InsightType.summary:
-        return [
-          'Identify the claim',
-          'Find the supporting reason',
-          'Connect it to the chapter goal',
-        ];
-      case InsightType.visual:
-        return ['Input', 'Process', 'Outcome'];
-      case InsightType.example:
-        return ['Team context', 'Decision pressure', 'Measurable result'];
-      case InsightType.actionSteps:
-        return ['Write the next action', 'Set a deadline', 'Review the result'];
-      case InsightType.simpleExplanation:
-        return ['Plain words', 'One example', 'One takeaway'];
-    }
   }
 }
 
@@ -276,94 +346,3 @@ class ReaderPayload {
   final List<Note> notes;
   final List<InsightCard> insights;
 }
-
-final List<Book> _books = [
-  Book(
-    id: 'book-systems',
-    title: 'Systems for Focus',
-    author: 'Mira Dalton',
-    description:
-        'A practical guide to building durable attention systems for study, product work, and business leadership.',
-    category: 'Productivity',
-    format: BookFormat.epub,
-    coverColor: 0xFF176B87,
-    progress: 0.36,
-    chapters: const [
-      BookChapter(
-        title: 'Design the Environment',
-        paragraphs: [
-          'Attention improves when the environment removes decisions before willpower is required. A good system makes the desired behavior the easiest behavior.',
-          'The strongest routines are not dramatic. They are quiet defaults: the prepared desk, the blocked calendar, the visible next step, and the closed loop for unfinished work.',
-          'When teams design focus together, they reduce coordination tax. Fewer status meetings and clearer written updates create more space for deep work.',
-        ],
-      ),
-      BookChapter(
-        title: 'Measure the Useful Signal',
-        paragraphs: [
-          'A metric should explain whether the system is working, not merely whether people are busy. Output, recovery, and learning rate matter more than hours alone.',
-          'Review cycles protect the system from becoming stale. Every Friday, remove one friction point and keep one practice that produced visible progress.',
-        ],
-      ),
-      BookChapter(
-        title: 'Keep the Loop Small',
-        paragraphs: [
-          'Small feedback loops create confidence. A reader, student, or founder can adjust quickly when the next review is close and the cost of change is low.',
-          'The goal is not constant productivity. The goal is a dependable rhythm that creates room for hard thinking and healthy recovery.',
-        ],
-      ),
-    ],
-  ),
-  Book(
-    id: 'book-market',
-    title: 'Market Maps',
-    author: 'Jon Bell',
-    description:
-        'A concise non-fiction book about understanding customers, competitors, and positioning through visual market models.',
-    category: 'Business',
-    format: BookFormat.pdf,
-    coverColor: 0xFFE17A47,
-    progress: 0.12,
-    chapters: const [
-      BookChapter(
-        title: 'Customer Gravity',
-        paragraphs: [
-          'Customers move toward products that reduce a painful job better than their current workaround. Mapping gravity means finding what already pulls their attention.',
-          'A useful market map separates loud competitors from meaningful alternatives. The strongest alternative is often a spreadsheet, a chat thread, or a manual process.',
-        ],
-      ),
-      BookChapter(
-        title: 'Positioning Choices',
-        paragraphs: [
-          'Positioning is a tradeoff. A product cannot be fastest, deepest, cheapest, and most flexible for every buyer at the same time.',
-          'Good positioning narrows the promise until the right customer can repeat it clearly to another person.',
-        ],
-      ),
-    ],
-  ),
-  Book(
-    id: 'book-learning',
-    title: 'Learning That Sticks',
-    author: 'Nadia Chen',
-    description:
-        'An education-focused reader on notes, memory, spaced repetition, and reflection habits for long-term knowledge retention.',
-    category: 'Education',
-    format: BookFormat.epub,
-    coverColor: 0xFF5D7A3A,
-    chapters: const [
-      BookChapter(
-        title: 'Make Recall Visible',
-        paragraphs: [
-          'Learning feels smooth during rereading, but durable memory appears during recall. The learner needs a way to see what can be produced without the page.',
-          'Notes should become prompts, not archives. A good note asks a future question and leaves enough context to rebuild the answer.',
-        ],
-      ),
-      BookChapter(
-        title: 'Reflect and Reconnect',
-        paragraphs: [
-          'Reflection links new information to decisions, examples, and previous knowledge. Without reflection, highlights become decoration.',
-          'The best study systems are lightweight enough to survive busy weeks and structured enough to create compounding value.',
-        ],
-      ),
-    ],
-  ),
-];

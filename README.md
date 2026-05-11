@@ -1,32 +1,56 @@
 # InsightShelf Mobile
 
-InsightShelf Mobile is a Flutter mobile reader for users who already purchased books on a web bookstore. The app demonstrates a complete API-style architecture with authentication, a purchased library, offline reading behavior, progress sync, notes, highlights, bookmarks, search, configurable reader preferences, and AI-style reading support.
+InsightShelf Mobile is a Flutter mobile reading app for already purchased books. It now uses the real PDFs placed in the project root, parses them into readable mobile pages, supports offline download state, and sends selected text to a local Ollama model for AI reading help.
 
-The repository is self-contained for coursework and portfolio review. Because no real backend credentials are included, the data layer uses a mock API client that behaves like a backend: every operation is asynchronous, failures are handled, offline mode blocks network-only actions, downloaded books remain readable, and local edits are queued for later sync.
+This is still a coursework/portfolio app, not a legal App Store bundle for redistributing the included commercial PDF. Before publishing publicly, replace the bundled PDF with content you own or load books from your own authenticated backend.
 
-## Course Requirements Coverage
+## What Works
 
-| Requirement | Implementation |
-| --- | --- |
-| Project concept and scope | Companion mobile e-reader for purchased books with AI-enhanced study tools. |
-| UI and UX design | Multi-screen Material 3 app: login, purchased library, book details, reader, search/preferences sheets, sync/account. |
-| State management | `flutter_bloc` Cubits: `AuthCubit`, `LibraryCubit`, and `ReaderCubit`. |
-| Data layer | Repository pattern over `MockInsightShelfApi`, async/await, try/catch, loading/error/empty states, CRUD actions, offline queue. |
-| Documentation | This README explains purpose, setup, architecture, and feature coverage. |
-| Code quality | Feature-based folders, entities, repositories, Cubits, reusable widgets, themed UI, and focused tests. |
+- Email/password login flow with session state.
+- Purchased library screen with the real PDF books from the project root.
+- Book details with PDF metadata, progress, and offline download action.
+- Runtime PDF text extraction using `syncfusion_flutter_pdf`.
+- Reader with parsed PDF pages, selectable text, paging, progress saving, search, bookmarks, highlights, notes, reader preferences, and dark mode.
+- Offline mode: books must be downloaded before they can be opened while offline; local reading edits are queued for sync.
+- Local AI generation through Ollama instead of fake generated text.
+- Settings screen for Ollama endpoint/model and a test button.
+- Cubit-based state management with `AuthCubit`, `LibraryCubit`, and `ReaderCubit`.
+- Repository/data layer with async operations, loading states, error handling, and separation from UI code.
 
-## Features
+Bundled local books:
 
-- Login with session restoration through `AuthRepository`.
-- Purchased-only book library with search, filters, cover cards, metadata, progress, format labels, and download status.
-- Book detail screen with description, chapters, progress, and offline download action.
-- Reader screen with scrolling text, chapter navigation, progress saving, selectable text, font size, line height, margins, dark theme, and business/fiction mode toggle.
-- Bookmarks, highlights, and notes with create/delete behavior.
-- Search inside the current book.
-- Offline mode simulation: downloaded books open offline, network-only actions show errors, and local reading actions are queued.
-- Sync screen showing connection state, pending action count, and account/logout.
-- AI reading actions: summarize, visualize, explain simpler, and create action steps from selected paragraph text.
-- Passive smart augmentation prompt for supported business/education reading mode.
+- `Kafka_Streams_in_Action,_Second_Edition.pdf`
+- `Grokking_Streaming_Systems.pdf`
+- `Designing Software Architecture-2nd-Edition.pdf`
+- `Streaming_Data_Pipelines_with_Kafka_v6_MEAP.pdf`
+
+## Ollama Setup
+
+Install and start Ollama on your laptop, then pull a small model:
+
+```bash
+ollama serve
+ollama pull llama3.2:1b
+```
+
+Default app settings:
+
+- Endpoint: `http://127.0.0.1:11434/api/generate`
+- Model: `llama3.2:1b`
+
+If you run on an Android emulator, use:
+
+```text
+http://10.0.2.2:11434/api/generate
+```
+
+If you run on a physical phone, use your laptop LAN IP, for example:
+
+```text
+http://192.168.1.20:11434/api/generate
+```
+
+Ollama must be reachable from the device. If generation fails, the app shows the actual connection/model error instead of silently returning mock content.
 
 ## Architecture
 
@@ -47,48 +71,55 @@ lib/
       domain/
       presentation/
     reader/
+      data/
       domain/
       presentation/
 ```
 
-The app follows a layered, feature-based architecture:
+Key classes:
 
-- Presentation: Flutter screens, widgets, navigation, and Material theme.
-- State: Cubits emit immutable state objects for authentication, library, and reader flows.
-- Domain: entities such as `Book`, `BookChapter`, `ReadingPreferences`, `Bookmark`, `Highlight`, `Note`, and `InsightCard`.
-- Data: repositories call the mock API client and isolate async data behavior from UI code.
+- `MockInsightShelfApi`: simulates the existing bookstore backend and local offline cache.
+- `PdfBookParser`: extracts text from the bundled PDF into reader pages.
+- `OllamaInsightClient`: calls Ollama `/api/generate`.
+- `LibraryRepository`: keeps UI code independent from data/API details.
+- `ReaderCubit`: controls reader state, progress, notes, highlights, bookmarks, search, preferences, and AI generation.
+
+## Course Requirements Coverage
+
+| Requirement | Implementation |
+| --- | --- |
+| Project concept and scope | Mobile companion reader for purchased technical books. |
+| UI and UX design | Login, library, details, reader, settings/sync, modals for search/preferences/notes. |
+| State management | `flutter_bloc` Cubits with immutable state objects. |
+| Data layer | Async repository/API layer, PDF parsing, Ollama API calls, CRUD actions, loading/error states, offline queue. |
+| Documentation | This README explains setup, architecture, Ollama, and limitations. |
+| Code quality | Feature-based folders, entities, repositories, Cubits, reusable widgets, tests, and analyzer-clean code. |
 
 ## Setup
 
-1. Install Flutter and open this folder.
-2. Install packages:
-
 ```bash
 flutter pub get
-```
-
-3. Run the app:
-
-```bash
 flutter run
 ```
 
-4. Run verification:
+Demo login:
+
+- Email: `reader@insightshelf.dev`
+- Password: `demo1234`
+
+Run checks:
 
 ```bash
 flutter analyze
 flutter test
 ```
 
-## Demo Login
+## App Store Notes
 
-The login screen is prefilled for fast testing:
+This project compiles for mobile, but App Store release still needs:
 
-- Email: `reader@insightshelf.dev`
-- Password: `demo1234`
-
-Any email containing `@` with a password of at least four characters is accepted by the mock API.
-
-## Notes for Real App Store Release
-
-This project is structured like a production client, but real App Store submission requires connecting the repository layer to a production backend, adding real secure token storage, real EPUB/PDF parsing, signed app identifiers, privacy policy URLs, store screenshots, app icons, and platform-specific release configuration.
+- Real backend authentication and purchased-book API.
+- Secure token storage.
+- Legal rights to distribute any bundled books.
+- Persistent local storage for downloaded books and annotations.
+- Production app icon, screenshots, privacy policy, signing, and store metadata.

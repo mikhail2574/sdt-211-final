@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/widgets/async_state_view.dart';
+import '../../library/domain/book.dart';
 import '../../library/presentation/library_cubit.dart';
 import '../domain/reading_models.dart';
 import 'reader_cubit.dart';
@@ -156,9 +157,12 @@ class _ReaderBody extends StatelessWidget {
               const SizedBox(height: 10),
               _ChapterControls(book: book, chapterIndex: state.chapterIndex),
               const SizedBox(height: 16),
-              ...chapter.paragraphs.map(
-                (paragraph) =>
-                    _ParagraphBlock(paragraph: paragraph, textStyle: textStyle),
+              ...chapter.paragraphs.indexed.map(
+                (entry) => _ParagraphBlock(
+                  paragraph: entry.$2,
+                  textStyle: textStyle,
+                  isFirst: entry.$1 == 0,
+                ),
               ),
               const SizedBox(height: 8),
               if (preferences.aiEnabled && preferences.businessMode)
@@ -176,7 +180,7 @@ class _ReaderBody extends StatelessWidget {
 class _ChapterControls extends StatelessWidget {
   const _ChapterControls({required this.book, required this.chapterIndex});
 
-  final dynamic book;
+  final Book book;
   final int chapterIndex;
 
   @override
@@ -192,7 +196,7 @@ class _ChapterControls extends StatelessWidget {
           label: const Text('Previous'),
         ),
         const Spacer(),
-        Text('${chapterIndex + 1} / ${book.chapters.length}'),
+        Text('Page ${chapterIndex + 1} / ${book.chapters.length}'),
         const Spacer(),
         OutlinedButton.icon(
           onPressed: chapterIndex >= book.chapters.length - 1
@@ -208,61 +212,67 @@ class _ChapterControls extends StatelessWidget {
 }
 
 class _ParagraphBlock extends StatelessWidget {
-  const _ParagraphBlock({required this.paragraph, required this.textStyle});
+  const _ParagraphBlock({
+    required this.paragraph,
+    required this.textStyle,
+    required this.isFirst,
+  });
 
   final String paragraph;
   final TextStyle textStyle;
+  final bool isFirst;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: Theme.of(context).colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText(paragraph, style: textStyle),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                IconButton.filledTonal(
-                  tooltip: 'Highlight',
-                  onPressed: () =>
-                      context.read<ReaderCubit>().addHighlight(paragraph),
-                  icon: const Icon(Icons.border_color_outlined),
-                ),
-                IconButton.filledTonal(
-                  tooltip: 'Add note',
-                  onPressed: () => _openNoteEditor(context, paragraph),
-                  icon: const Icon(Icons.note_add_outlined),
-                ),
-                _InsightActionButton(
-                  text: paragraph,
-                  type: InsightType.summary,
-                  icon: Icons.summarize_outlined,
-                ),
-                _InsightActionButton(
-                  text: paragraph,
-                  type: InsightType.visual,
-                  icon: Icons.account_tree_outlined,
-                ),
-                _InsightActionButton(
-                  text: paragraph,
-                  type: InsightType.simpleExplanation,
-                  icon: Icons.lightbulb_outline,
-                ),
-                _InsightActionButton(
-                  text: paragraph,
-                  type: InsightType.actionSteps,
-                  icon: Icons.checklist_outlined,
-                ),
-              ],
-            ),
-          ],
-        ),
+    return Padding(
+      padding: EdgeInsets.only(top: isFirst ? 0 : 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SelectableText(paragraph, style: textStyle),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              IconButton(
+                tooltip: 'Highlight paragraph',
+                onPressed: () =>
+                    context.read<ReaderCubit>().addHighlight(paragraph),
+                icon: const Icon(Icons.border_color_outlined),
+              ),
+              IconButton(
+                tooltip: 'Add note',
+                onPressed: () => _openNoteEditor(context, paragraph),
+                icon: const Icon(Icons.note_add_outlined),
+              ),
+              _InsightActionButton(
+                text: paragraph,
+                type: InsightType.summary,
+                icon: Icons.summarize_outlined,
+              ),
+              _InsightActionButton(
+                text: paragraph,
+                type: InsightType.visual,
+                icon: Icons.account_tree_outlined,
+              ),
+              _InsightActionButton(
+                text: paragraph,
+                type: InsightType.simpleExplanation,
+                icon: Icons.lightbulb_outline,
+              ),
+              _InsightActionButton(
+                text: paragraph,
+                type: InsightType.actionSteps,
+                icon: Icons.checklist_outlined,
+              ),
+            ],
+          ),
+          Divider(
+            height: 24,
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.45),
+          ),
+        ],
       ),
     );
   }
@@ -321,8 +331,8 @@ class _PassiveInsightPrompt extends StatelessWidget {
     return Card(
       child: ListTile(
         leading: const Icon(Icons.psychology_outlined),
-        title: const Text('Smart augmentation available'),
-        subtitle: const Text('Generate a short concept card for this chapter.'),
+        title: const Text('Create local AI note'),
+        subtitle: const Text('Send this page excerpt to Ollama.'),
         trailing: FilledButton(
           onPressed: () => context.read<ReaderCubit>().generateInsight(
             text,

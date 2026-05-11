@@ -16,6 +16,7 @@ class BookDetailScreen extends StatelessWidget {
     return BlocBuilder<LibraryCubit, LibraryState>(
       builder: (context, state) {
         final book = state.books.firstWhere((item) => item.id == bookId);
+        final isDownloading = state.downloadingBookIds.contains(book.id);
         return Scaffold(
           appBar: AppBar(title: const Text('Book Details')),
           body: ListView(
@@ -75,14 +76,28 @@ class BookDetailScreen extends StatelessWidget {
               const SizedBox(height: 22),
               Text('Chapters', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
-              ...book.chapters.map(
-                (chapter) => ListTile(
+              if (book.chapters.isEmpty)
+                ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.menu_book_outlined),
-                  title: Text(chapter.title),
-                  subtitle: Text('${chapter.paragraphs.length} reading blocks'),
-                ),
-              ),
+                  leading: const Icon(Icons.picture_as_pdf_outlined),
+                  title: Text('${book.pageCount ?? 0} PDF pages'),
+                  subtitle: Text(
+                    '${book.fileSizeLabel ?? 'Local file'} - text is parsed when the book is opened or downloaded.',
+                  ),
+                )
+              else
+                ...book.chapters
+                    .take(8)
+                    .map(
+                      (chapter) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.menu_book_outlined),
+                        title: Text(chapter.title),
+                        subtitle: Text(
+                          '${chapter.paragraphs.length} readable blocks',
+                        ),
+                      ),
+                    ),
               const SizedBox(height: 22),
               FilledButton.icon(
                 onPressed: () {
@@ -94,17 +109,24 @@ class BookDetailScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.chrome_reader_mode_outlined),
                 label: Text(
-                  book.progress > 0 ? 'Continue reading' : 'Start reading',
+                  book.progress > 0 ? 'Continue reading' : 'Open reader',
                 ),
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(
-                onPressed: book.isDownloaded
+                onPressed: book.isDownloaded || isDownloading
                     ? null
                     : () => context.read<LibraryCubit>().downloadBook(book.id),
-                icon: const Icon(Icons.download_for_offline_outlined),
+                icon: isDownloading
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_for_offline_outlined),
                 label: Text(
-                  book.isDownloaded
+                  isDownloading
+                      ? 'Preparing offline copy'
+                      : book.isDownloaded
                       ? 'Available offline'
                       : 'Download for offline',
                 ),

@@ -95,7 +95,7 @@ class SyncScreen extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 12),
-              const _ArchitectureCard(),
+              const _OllamaSettingsCard(),
             ],
           );
         },
@@ -104,8 +104,31 @@ class SyncScreen extends StatelessWidget {
   }
 }
 
-class _ArchitectureCard extends StatelessWidget {
-  const _ArchitectureCard();
+class _OllamaSettingsCard extends StatefulWidget {
+  const _OllamaSettingsCard();
+
+  @override
+  State<_OllamaSettingsCard> createState() => _OllamaSettingsCardState();
+}
+
+class _OllamaSettingsCardState extends State<_OllamaSettingsCard> {
+  late final TextEditingController _endpointController;
+  late final TextEditingController _modelController;
+
+  @override
+  void initState() {
+    super.initState();
+    final state = context.read<LibraryCubit>().state;
+    _endpointController = TextEditingController(text: state.ollamaEndpoint);
+    _modelController = TextEditingController(text: state.ollamaModel);
+  }
+
+  @override
+  void dispose() {
+    _endpointController.dispose();
+    _modelController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -113,67 +136,64 @@ class _ArchitectureCard extends StatelessWidget {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Architecture', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 10),
-            const _ArchitectureRow(
-              icon: Icons.layers_outlined,
-              title: 'Presentation',
-              body: 'Screens, reusable widgets, Material 3 theme, navigation.',
-            ),
-            const _ArchitectureRow(
-              icon: Icons.account_tree_outlined,
-              title: 'State',
-              body: 'AuthCubit, LibraryCubit, ReaderCubit with async states.',
-            ),
-            const _ArchitectureRow(
-              icon: Icons.storage_outlined,
-              title: 'Data',
-              body:
-                  'Repository plus mock API client, local cache, offline queue.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ArchitectureRow extends StatelessWidget {
-  const _ArchitectureRow({
-    required this.icon,
-    required this.title,
-    required this.body,
-  });
-
-  final IconData icon;
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
+        child: BlocBuilder<LibraryCubit, LibraryState>(
+          builder: (context, state) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                Text('Local AI via Ollama', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _endpointController,
+                  decoration: const InputDecoration(
+                    labelText: 'Ollama generate endpoint',
+                    prefixIcon: Icon(Icons.link),
+                  ),
                 ),
-                Text(body),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _modelController,
+                  decoration: const InputDecoration(
+                    labelText: 'Model',
+                    prefixIcon: Icon(Icons.memory),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () =>
+                          context.read<LibraryCubit>().updateOllamaSettings(
+                            endpoint: _endpointController.text,
+                            model: _modelController.text,
+                          ),
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('Save'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: state.isTestingOllama
+                          ? null
+                          : () => context.read<LibraryCubit>().testOllama(),
+                      icon: state.isTestingOllama
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.bolt_outlined),
+                      label: const Text('Test'),
+                    ),
+                  ],
+                ),
+                if (state.ollamaMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(state.ollamaMessage!),
+                ],
               ],
-            ),
-          ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }

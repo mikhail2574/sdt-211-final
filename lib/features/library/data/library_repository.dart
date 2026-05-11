@@ -8,7 +8,9 @@ class LibraryRepository {
   final MockInsightShelfApi _api;
 
   bool get isOnline => _api.isOnline;
-  int get pendingSyncCount => _api.pendingSyncCount;
+  Future<int> get pendingSyncCount => _api.pendingSyncCount;
+  String get ollamaEndpoint => _api.ollamaEndpoint;
+  String get ollamaModel => _api.ollamaModel;
 
   Future<List<Book>> fetchPurchasedBooks() => _api.fetchPurchasedBooks();
 
@@ -58,4 +60,13 @@ class LibraryRepository {
   Future<void> setOnline(bool value) => _api.setOnline(value);
 
   Future<int> syncPendingActions() => _api.syncPendingActions();
+
+  Future<void> updateOllamaSettings({
+    required String endpoint,
+    required String model,
+  }) {
+    return _api.updateOllamaSettings(endpoint: endpoint, model: model);
+  }
+
+  Future<String> testOllama() => _api.testOllama();
 }
