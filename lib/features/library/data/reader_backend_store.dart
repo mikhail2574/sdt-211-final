@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -54,10 +55,14 @@ class ReaderBackendStore {
 
     Directory directory;
     try {
-      directory = await getApplicationSupportDirectory();
+      directory = await getApplicationSupportDirectory().timeout(
+        const Duration(seconds: 2),
+      );
     } on MissingPluginException {
       directory = Directory.systemTemp;
     } on UnsupportedError {
+      directory = Directory.systemTemp;
+    } on TimeoutException {
       directory = Directory.systemTemp;
     }
 
